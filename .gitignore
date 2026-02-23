@@ -51,16 +51,6 @@ Thumbs.db
 *.swo
 
 # =========================
-# Package managers
-# =========================
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-
-# (optional: keep lock file if working in team)
-# Comment out above if needed
-
-# =========================
 # Testing
 # =========================
 coverage/
