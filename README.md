@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Restaurant Management System - Backend
 
 This repository contains the complete Node.js Express backend for a comprehensive Restaurant Management System. It provides a robust, scalable, and secure foundation for managing restaurant operations, including authentication, multi-branch support, menu management, reservations, online ordering, payments, and an admin dashboard.
@@ -168,3 +169,6 @@ A Postman collection can be generated from the routes to explore all available e
 *   Routes requiring `roleMiddleware("admin")` are accessible only by users with the `admin` role.
 *   Routes requiring `roleMiddleware("admin", "staff")` are accessible by both admins and staff.
 *   The `branchAccessMiddleware` ensures that staff can only manage resources (like menu items or orders) associated with their assigned branch.
+=======
+# Tos-Nham-backend
+>>>>>>> af7f2c65927c50076d9be995df10c512d166a581
