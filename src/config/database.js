@@ -1,26 +1,20 @@
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'restaurant_system',
-  process.env.DB_USER || 'root',
-  process.env.DB_PASSWORD || 'Nith@ite',
-  {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,
-    dialect: 'mysql',
-    logging: process.env.NODE_ENV === 'development' ? console.log : false,
-    pool: {
-      max: 10,
-      min: 0,
-      acquire: 30000,
-      idle: 10000,
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: 'postgres',
+  protocol: 'postgres',
+  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false,
     },
-    define: {
-      timestamps: true,
-      underscored: true,
-    },
-  }
-);
+  },
+  define: {
+    timestamps: true,
+    underscored: true,
+  },
+});
 
 module.exports = sequelize;

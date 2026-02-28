@@ -42,6 +42,13 @@ const Order = sequelize.define('Order', {
     ),
     defaultValue: 'Pending',
   },
+
+  // 🔥 NEW FIELD FOR BAKONG
+  bakong_md5: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+
   // Delivery information
   delivery_address: {
     type: DataTypes.TEXT,

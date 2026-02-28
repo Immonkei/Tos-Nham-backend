@@ -142,25 +142,48 @@ const getPaymentById = async (req, res) => {
 const uploadReceipt = async (req, res) => {
   try {
     const payment = await Payment.findByPk(req.params.id);
+
     if (!payment) {
-      return res.status(404).json({ success: false, message: 'Payment not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found.',
+      });
     }
 
     if (!req.file) {
-      return res.status(400).json({ success: false, message: 'No receipt image uploaded.' });
+      return res.status(400).json({
+        success: false,
+        message: 'No receipt image uploaded.',
+      });
+    }
+
+    // Prevent re-upload after verification
+    if (payment.status === 'Verified') {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment already verified.',
+      });
     }
 
     const receipt_image_path = `/uploads/receipts/${req.file.filename}`;
-    await payment.update({ receipt_image_path, status: 'Pending Verification' });
+
+    await payment.update({
+      receipt_image_path,
+      status: 'Pending Verification',
+    });
 
     return res.status(200).json({
       success: true,
-      message: 'Receipt uploaded successfully.',
+      message: 'Receipt uploaded successfully. Awaiting admin verification.',
       data: { receipt_image_path },
     });
+
   } catch (error) {
     console.error('UploadReceipt error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error.' });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
   }
 };
 
@@ -171,7 +194,7 @@ const uploadReceipt = async (req, res) => {
  */
 const verifyPayment = async (req, res) => {
   try {
-    const { action, rejection_reason } = req.body; // action: 'approve' | 'reject'
+    const { action, rejection_reason } = req.body;
 
     if (!['approve', 'reject'].includes(action)) {
       return res.status(400).json({
@@ -181,67 +204,94 @@ const verifyPayment = async (req, res) => {
     }
 
     const payment = await Payment.findByPk(req.params.id, {
-      include: ['order', 'reservation'],
+      include: [{ association: 'order' }, { association: 'reservation' }],
     });
 
     if (!payment) {
-      return res.status(404).json({ success: false, message: 'Payment not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found.',
+      });
     }
 
+    // Prevent double processing
     if (payment.status !== 'Pending Verification') {
       return res.status(400).json({
         success: false,
-        message: `Payment has already been ${payment.status.toLowerCase()}.`,
+        message: `Payment already processed.`,
       });
     }
 
     if (action === 'reject' && !rejection_reason) {
       return res.status(400).json({
         success: false,
-        message: 'rejection_reason is required when rejecting a payment.',
+        message: 'rejection_reason is required when rejecting.',
       });
     }
 
-    const newStatus = action === 'approve' ? 'Verified' : 'Rejected';
+    if (action === 'approve') {
 
-    await payment.update({
-      status: newStatus,
-      verified_by: req.user.id,
-      verified_at: new Date(),
-      rejection_reason: action === 'reject' ? rejection_reason : null,
-    });
+      // 🔒 SECURITY: Validate amount matches order
+      if (payment.order) {
+        if (Number(payment.amount) !== Number(payment.order.total_amount)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Payment amount does not match order total.',
+          });
+        }
 
-    // If payment is for an order, update order payment_status
-    if (action === 'approve' && payment.order_id) {
-      await Order.update(
-        { payment_status: 'Paid' },
-        { where: { id: payment.order_id } }
-      );
-    }
+        await payment.update({
+          status: 'Verified',
+          verified_by: req.user.id,
+          verified_at: new Date(),
+        });
 
-    // If payment is for a reservation deposit, confirm the reservation
-    if (action === 'approve' && payment.reservation_id) {
-      const { generateSecureToken, generateQRCodeDataURL } = require('../utils/qrHelper');
-      const reservation = await Reservation.findByPk(payment.reservation_id);
-      if (reservation && reservation.status === 'Pending Payment') {
-        const qr_token = generateSecureToken();
-        await reservation.update({
-          status: 'Confirmed',
-          qr_token,
-          qr_used: false,
-          qr_generated_at: new Date(),
+        await payment.order.update({
+          payment_status: 'Paid',
+          order_status: 'Completed',
         });
       }
+
+      // Reservation logic (if needed)
+      if (payment.reservation) {
+        await payment.update({
+          status: 'Verified',
+          verified_by: req.user.id,
+          verified_at: new Date(),
+        });
+
+        if (payment.reservation.status === 'Pending Payment') {
+          await payment.reservation.update({
+            status: 'Confirmed',
+          });
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment verified and order completed.',
+      });
     }
+
+    // Reject flow
+    await payment.update({
+      status: 'Rejected',
+      verified_by: req.user.id,
+      verified_at: new Date(),
+      rejection_reason,
+    });
 
     return res.status(200).json({
       success: true,
-      message: `Payment ${newStatus.toLowerCase()} successfully.`,
-      data: { payment },
+      message: 'Payment rejected successfully.',
     });
+
   } catch (error) {
     console.error('VerifyPayment error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error.' });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
   }
 };
 

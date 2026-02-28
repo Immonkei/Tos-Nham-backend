@@ -1,14 +1,20 @@
+const crypto = require('crypto');
 const { Reservation } = require('../models');
 const { generateQRCodeDataURL, generateQRCodeSVG } = require('../utils/qrHelper');
 
-/**
- * POST /api/qr/validate
- * Validate a QR token when staff scans it.
- * - Checks token existence
- * - Checks reservation status
- * - Marks reservation as "Arrived" and token as used
- * Access: Staff, Admin
- */
+const QR_EXPIRATION_MINUTES = 120;
+
+/* =========================================================
+   Generate Secure Token
+========================================================= */
+const generateSecureToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+/* =========================================================
+   Validate QR Token (Staff/Admin Scan)
+   POST /api/qr/validate
+========================================================= */
 const validateQRToken = async (req, res) => {
   try {
     const { token } = req.body;
@@ -20,7 +26,6 @@ const validateQRToken = async (req, res) => {
       });
     }
 
-    // Find reservation by token
     const reservation = await Reservation.findOne({
       where: { qr_token: token },
       include: [
@@ -32,56 +37,107 @@ const validateQRToken = async (req, res) => {
     if (!reservation) {
       return res.status(404).json({
         success: false,
-        message: 'Invalid QR token. No reservation found.',
+        message: 'Invalid QR token.',
       });
     }
 
-    // Check if token has already been used
-    if (reservation.qr_used) {
-      return res.status(400).json({
-        success: false,
-        message: 'QR token has already been used. Reservation was previously checked in.',
-        data: {
-          reservation_id: reservation.id,
-          status: reservation.status,
-        },
-      });
-    }
-
-    // Check reservation status
-    if (reservation.status === 'Cancelled') {
-      return res.status(400).json({
-        success: false,
-        message: 'Reservation has been cancelled.',
-        data: { reservation_id: reservation.id, status: reservation.status },
-      });
-    }
-
-    if (reservation.status === 'Completed') {
-      return res.status(400).json({
-        success: false,
-        message: 'Reservation has already been completed.',
-        data: { reservation_id: reservation.id, status: reservation.status },
-      });
-    }
-
-    if (reservation.status === 'Pending Payment') {
-      return res.status(400).json({
-        success: false,
-        message: 'Reservation deposit has not been paid yet.',
-        data: { reservation_id: reservation.id, status: reservation.status },
-      });
-    }
-
-    // Staff branch check
-    if (req.user.role === 'staff' && req.user.branch_id !== reservation.branch_id) {
+    /* =========================================
+       Branch Restriction
+    ========================================= */
+    if (
+      req.user.role === 'staff' &&
+      req.user.branch_id !== reservation.branch_id
+    ) {
       return res.status(403).json({
         success: false,
         message: 'This reservation belongs to a different branch.',
       });
     }
 
-    // Mark as Arrived and expire the token
+    /* =========================================
+       Status Validation
+    ========================================= */
+    if (reservation.status === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Reservation has been cancelled.',
+      });
+    }
+
+    if (reservation.status === 'Completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Reservation already completed.',
+      });
+    }
+
+    if (reservation.status === 'Arrived') {
+      return res.status(400).json({
+        success: false,
+        message: 'Guest already checked in.',
+      });
+    }
+
+    if (reservation.status === 'Pending Payment') {
+      return res.status(400).json({
+        success: false,
+        message: 'Deposit has not been paid yet.',
+      });
+    }
+
+    if (reservation.status !== 'Confirmed') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot check in reservation with status: ${reservation.status}`,
+      });
+    }
+
+    /* =========================================
+       QR Already Used
+    ========================================= */
+    if (reservation.qr_used) {
+      return res.status(400).json({
+        success: false,
+        message: 'QR already used.',
+      });
+    }
+
+    /* =========================================
+       Expiration Check
+    ========================================= */
+    if (reservation.qr_generated_at) {
+      const now = new Date();
+      const generatedAt = new Date(reservation.qr_generated_at);
+
+      const diffMinutes = (now - generatedAt) / (1000 * 60);
+
+      if (diffMinutes > QR_EXPIRATION_MINUTES) {
+        return res.status(400).json({
+          success: false,
+          message: 'QR token expired.',
+        });
+      }
+    }
+
+    /* =========================================
+       Date Validation (Timezone Safe)
+    ========================================= */
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const reservationDate = new Date(reservation.reservation_date);
+    reservationDate.setHours(0, 0, 0, 0);
+
+    if (reservationDate.getTime() !== today.getTime()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reservation date does not match today.',
+      });
+    }
+
+    /* =========================================
+       Mark Arrived
+    ========================================= */
     await reservation.update({
       status: 'Arrived',
       qr_used: true,
@@ -89,7 +145,7 @@ const validateQRToken = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'QR validated successfully. Guest has arrived.',
+      message: 'Guest checked in successfully.',
       data: {
         reservation_id: reservation.id,
         status: 'Arrived',
@@ -100,18 +156,20 @@ const validateQRToken = async (req, res) => {
         number_of_people: reservation.number_of_people,
       },
     });
+
   } catch (error) {
     console.error('ValidateQRToken error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error.' });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
   }
 };
 
-/**
- * GET /api/qr/reservation/:id
- * Generate/retrieve QR code for a reservation.
- * Returns both base64 data URL and SVG.
- * Access: Staff, Admin
- */
+/* =========================================================
+   Get QR For Reservation
+   GET /api/qr/reservation/:id
+========================================================= */
 const getQRForReservation = async (req, res) => {
   try {
     const reservation = await Reservation.findByPk(req.params.id, {
@@ -122,21 +180,20 @@ const getQRForReservation = async (req, res) => {
     });
 
     if (!reservation) {
-      return res.status(404).json({ success: false, message: 'Reservation not found.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Reservation not found.',
+      });
     }
 
     if (!reservation.qr_token) {
       return res.status(400).json({
         success: false,
-        message: 'No QR token available. Deposit payment must be confirmed first.',
+        message: 'QR token not generated. Deposit must be confirmed.',
       });
     }
 
-    const qrPayload = {
-      reservation_id: reservation.id,
-      branch_id: reservation.branch_id,
-      token: reservation.qr_token,
-    };
+    const qrPayload = reservation.qr_token;
 
     const [qrDataURL, qrSVG] = await Promise.all([
       generateQRCodeDataURL(qrPayload),
@@ -162,10 +219,18 @@ const getQRForReservation = async (req, res) => {
         },
       },
     });
+
   } catch (error) {
     console.error('GetQRForReservation error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error.' });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
   }
 };
 
-module.exports = { validateQRToken, getQRForReservation };
+module.exports = {
+  validateQRToken,
+  getQRForReservation,
+  generateSecureToken,
+};

@@ -17,7 +17,7 @@ const orderValidation = [
     .isIn(['dine-in', 'delivery', 'takeaway'])
     .withMessage('order_type must be dine-in, delivery, or takeaway.'),
   body('payment_method')
-    .isIn(['cash', 'card', 'transfer', 'qr_payment'])
+  .isIn(['cash', 'card', 'transfer', 'qr_payment'])
     .withMessage('Invalid payment_method.'),
   body('items').isArray({ min: 1 }).withMessage('items must be a non-empty array.'),
   body('items.*.menu_item_id').isInt({ min: 1 }).withMessage('Each item must have a valid menu_item_id.'),
