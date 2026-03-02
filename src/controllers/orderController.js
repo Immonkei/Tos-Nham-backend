@@ -1,10 +1,17 @@
 const { Op } = require('sequelize');
-const { Order, OrderItem, MenuItem, Branch, sequelize } = require('../models');
+const axios = require('axios');
+const {
+  Order,
+  OrderItem,
+  MenuItem,
+  Branch,
+  sequelize
+} = require('../models');
 const { generateKHQR } = require('../services/bakongService');
 
-/**
- * POST /api/orders
- */
+/* ============================================================
+   CREATE ORDER
+============================================================ */
 const createOrder = async (req, res) => {
   const t = await sequelize.transaction();
 
@@ -17,9 +24,12 @@ const createOrder = async (req, res) => {
       delivery_address,
       delivery_phone,
       delivery_name,
+      delivery_lat,
+      delivery_lng,
       notes,
     } = req.body;
 
+    // Validate branch
     const branch = await Branch.findOne({
       where: { id: branch_id, deleted_at: null },
     });
@@ -32,6 +42,7 @@ const createOrder = async (req, res) => {
       });
     }
 
+    // Validate items
     if (!items || items.length === 0) {
       await t.rollback();
       return res.status(400).json({
@@ -78,16 +89,25 @@ const createOrder = async (req, res) => {
 
     total_amount = parseFloat(total_amount.toFixed(2));
 
+    // Delivery validation
     if (order_type === 'delivery') {
-      if (!delivery_address || !delivery_phone || !delivery_name) {
+      if (
+        !delivery_address ||
+        !delivery_phone ||
+        !delivery_name ||
+        !delivery_lat ||
+        !delivery_lng
+      ) {
         await t.rollback();
         return res.status(400).json({
           success: false,
-          message: 'Delivery info is required.',
+          message:
+            'Complete delivery information (address, phone, name, latitude, longitude) is required.',
         });
       }
     }
 
+    // Create order
     const order = await Order.create(
       {
         user_id: req.user.id,
@@ -100,11 +120,14 @@ const createOrder = async (req, res) => {
         delivery_address,
         delivery_phone,
         delivery_name,
+        delivery_lat,
+        delivery_lng,
         notes,
       },
       { transaction: t }
     );
 
+    // Create order items
     const orderItems = await OrderItem.bulkCreate(
       orderItemsData.map((item) => ({
         ...item,
@@ -115,7 +138,7 @@ const createOrder = async (req, res) => {
 
     let paymentData = null;
 
-    // 🔥 BAKONG QR PAYMENT
+    // QR Payment
     if (payment_method === 'qr_payment') {
       const { qr, md5 } = await generateKHQR(order);
 
@@ -154,12 +177,71 @@ const createOrder = async (req, res) => {
 };
 
 
-/**
- * GET /api/orders
- */
+/* ============================================================
+   CHECK PAYMENT (Bakong)
+============================================================ */
+const checkOrderPayment = async (req, res) => {
+  try {
+    const order = await Order.findByPk(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    if (!order.bakong_md5) {
+      return res.status(400).json({
+        success: false,
+        message: 'This order does not use QR payment'
+      });
+    }
+
+    // Call FastAPI
+    const response = await axios.get(
+      `http://localhost:8001/check/${order.bakong_md5}`
+    );
+
+    const isPaid = response.data.is_paid;
+
+    if (isPaid) {
+      await order.update({
+        payment_status: 'Paid',
+        order_status: 'Confirmed'
+      });
+    }
+
+    return res.json({
+      success: true,
+      is_paid: isPaid,
+      order
+    });
+
+  } catch (error) {
+    console.error('CheckOrderPayment error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+
+/* ============================================================
+   GET ORDERS (ROLE FILTERED)
+============================================================ */
 const getOrders = async (req, res) => {
   try {
-    const { branch_id, order_status, payment_status, order_type, page = 1, limit = 20 } = req.query;
+    const {
+      branch_id,
+      order_status,
+      payment_status,
+      order_type,
+      page = 1,
+      limit = 20
+    } = req.query;
+
     const where = {};
 
     if (req.user.role === 'customer') {
@@ -176,25 +258,27 @@ const getOrders = async (req, res) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const { count, rows: orders } = await Order.findAndCountAll({
+    const { count, rows } = await Order.findAndCountAll({
       where,
       include: [
         { association: 'user', attributes: ['id', 'name', 'email', 'phone'] },
         { association: 'branch', attributes: ['id', 'branch_name'] },
         {
           association: 'orderItems',
-          include: [{ association: 'menuItem', attributes: ['id', 'name', 'price'] }],
-        },
+          include: [
+            { association: 'menuItem', attributes: ['id', 'name', 'price'] }
+          ]
+        }
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
-      offset,
+      offset
     });
 
     return res.status(200).json({
       success: true,
       data: {
-        orders,
+        orders: rows,
         pagination: {
           total: count,
           page: parseInt(page),
@@ -203,15 +287,26 @@ const getOrders = async (req, res) => {
         },
       },
     });
+
   } catch (error) {
     console.error('GetOrders error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error.' });
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
+    });
   }
 };
+
+
+/* ============================================================
+   GET ORDER BY ID
+============================================================ */
 const getOrderById = async (req, res) => {
   try {
     const order = await Order.findByPk(req.params.id, {
-      include: ['orderItems'],
+      include: [
+        { association: 'orderItems' }
+      ]
     });
 
     if (!order) {
@@ -225,6 +320,7 @@ const getOrderById = async (req, res) => {
       success: true,
       data: { order },
     });
+
   } catch (error) {
     console.error('GetOrderById error:', error);
     return res.status(500).json({
@@ -234,6 +330,10 @@ const getOrderById = async (req, res) => {
   }
 };
 
+
+/* ============================================================
+   UPDATE ORDER STATUS
+============================================================ */
 const updateOrderStatus = async (req, res) => {
   try {
     const order = await Order.findByPk(req.params.id);
@@ -254,6 +354,7 @@ const updateOrderStatus = async (req, res) => {
       message: 'Order status updated.',
       data: { order },
     });
+
   } catch (error) {
     console.error('UpdateOrderStatus error:', error);
     return res.status(500).json({
@@ -263,6 +364,10 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
+
+/* ============================================================
+   GET ORDERS BY BRANCH
+============================================================ */
 const getOrdersByBranch = async (req, res) => {
   try {
     const orders = await Order.findAll({
@@ -273,6 +378,7 @@ const getOrdersByBranch = async (req, res) => {
       success: true,
       data: { orders },
     });
+
   } catch (error) {
     console.error('GetOrdersByBranch error:', error);
     return res.status(500).json({
@@ -282,8 +388,13 @@ const getOrdersByBranch = async (req, res) => {
   }
 };
 
+
+/* ============================================================
+   EXPORTS
+============================================================ */
 module.exports = {
   createOrder,
+  checkOrderPayment,
   getOrders,
   getOrderById,
   updateOrderStatus,

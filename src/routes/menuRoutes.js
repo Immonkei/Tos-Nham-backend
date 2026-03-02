@@ -15,7 +15,7 @@ const {
 const { authMiddleware, roleMiddleware, branchAccessMiddleware } = require('../middleware/authMiddleware');
 const { validateRequest } = require('../middleware/validationMiddleware');
 const { uploadMenuImage } = require('../utils/upload');
-
+const { rateMenuItem } = require('../controllers/menuController');
 // ─── Category Routes ──────────────────────────────────────────────────────────
 
 /**
@@ -126,5 +126,17 @@ router.put(
  * @access  Admin, Staff
  */
 router.delete('/items/:id', authMiddleware, roleMiddleware('admin', 'staff'), deleteMenuItem);
+
+router.post(
+  '/items/:id/rate',
+  authMiddleware,
+  [
+    body('rating')
+      .isInt({ min: 1, max: 5 })
+      .withMessage('Rating must be between 1 and 5.')
+  ],
+  validateRequest,
+  rateMenuItem
+);
 
 module.exports = router;
