@@ -12,6 +12,7 @@ const Payment = require('./Payment');
 const Table = require('./Table');
 const Rating = require('./Rating')(sequelize, DataTypes);
 const UserAddress = require('./UserAddress');
+const Cart = require('./Cart');
 /* =========================
    ASSOCIATIONS
 ========================= */
@@ -70,7 +71,13 @@ Payment.belongsTo(User, { foreignKey: 'verified_by', as: 'verifiedBy' });
 // Reservation ↔ Table
 Reservation.belongsTo(Table, { foreignKey: "table_id" });
 Table.hasMany(Reservation, { foreignKey: "table_id" });
+// Cart ↔ User
+User.hasMany(Cart, { foreignKey: 'user_id', as: 'cartItems' });
+Cart.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
+// Cart ↔ MenuItem
+MenuItem.hasMany(Cart, { foreignKey: 'menu_item_id', as: 'cartItems' });
+Cart.belongsTo(MenuItem, { foreignKey: 'menu_item_id', as: 'menuItem' });
 User.hasMany(UserAddress, {
   foreignKey: 'user_id',
   as: 'addresses'
@@ -103,4 +110,5 @@ module.exports = {
   Table,
   Rating,
   UserAddress,
+  Cart,
 };

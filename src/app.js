@@ -14,7 +14,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const qrRoutes = require("./routes/qrRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const abaRoutes = require("./routes/abaRoutes"); // Import ABA routes
-
+const cartRoutes = require("./routes/cartRoutes");
 const addressRoutes = require("./routes/addressRoutes");
 // ─── App Initialization ───────────────────────────────────────────────────────
 const app = express();
@@ -57,7 +57,7 @@ app.use("/api/qr", qrRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/aba", abaRoutes); // Register ABA routes here
 app.use("/api/addresses", addressRoutes);
-
+app.use("/api/cart", cartRoutes);
 // ─── Error Handling Middleware ──────────────────────────────────────────────
 
 
